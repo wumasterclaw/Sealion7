@@ -1,0 +1,16 @@
+{
+  "name": "Sealion 7 Dashboard",
+  "short_name": "Sealion 7",
+  "description": "Read-only OBD2 dashboard for the BYD Sealion 7 Premium",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#080b10",
+  "theme_color": "#0b0f14",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
