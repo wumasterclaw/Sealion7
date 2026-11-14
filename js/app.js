@@ -2,6 +2,7 @@ import { Store, LiveSource, DemoSource, DECODE_TYPES } from './sources.js';
 import { ElmBle } from './elm.js';
 import { stdPidInfo, hex, nrcText } from './obd.js';
 import { METRICS, BYD_PIDS, statusOf, describeDtc, dtcSeverity, VEHICLE } from './profile.js';
+import { History, Sessions, Alerts, keepAwake, tripSummary, consumptionStatus } from './features.js';
 
 /* ------------------------------------------------------------------ helpers */
 const $ = (s, el = document) => el.querySelector(s);
@@ -17,13 +18,17 @@ const storage = {
 };
 
 const settings = Object.assign(
-  { refreshMs: 1000, usableKwh: VEHICLE.usableKwh, consumption: 18, extraModules: [], customPids: [] },
+  { refreshMs: 1000, usableKwh: VEHICLE.usableKwh, consumption: 18, extraModules: [], customPids: [],
+    tripIdleMin: 5, alerts: true, alertWarnings: false, alertSound: true, alertVibrate: true, keepAwake: true },
   storage.get('s7.settings', {}),
 );
 const saveSettings = () => storage.set('s7.settings', settings);
 
 const store = new Store();
 let source = null;
+const history = new History();
+const sessions = new Sessions(store, settings, history);
+const alerts = new Alerts(store, settings, history, (level, title, detail) => showAlert(level, title, detail));
 let lastFaults = null;
 const dataLog = [];
 
@@ -109,7 +114,7 @@ function updateGauge(el) {
   const frac = Math.max(0, Math.min(1, (v - min) / (max - min)));
   val.setAttribute('stroke-dasharray', `${(frac * 75).toFixed(2)} 100`);
   pill.dataset.s = s; pill.textContent = STATUS_LABEL[s];
-  el.classList.toggle('charging', id === 'soc' && !!store.info.charging);
+  el.classList.toggle('is-charging', id === 'soc' && !!store.info.charging);
 }
 
 function missingText(id) {
@@ -256,17 +261,24 @@ function render() {
   requestAnimationFrame(() => {
     rafPending = false;
     const active = $('.panel.active');
-    $$('[data-gauge]', active).forEach(updateGauge);
-    $$('[data-metric]', active).forEach(updateMetric);
-    $$('[data-pill]', active).forEach(updatePill);
+    const scopes = carOpen ? [$('#carMode')] : [active];
+    scopes.forEach((sc) => {
+      $$('[data-gauge]', sc).forEach(updateGauge);
+      $$('[data-metric]', sc).forEach(updateMetric);
+      $$('[data-pill]', sc).forEach(updatePill);
+    });
+    if (carOpen) { renderCar(); return; }
     if (active.id === 'tab-overview') { updateFlow(); $('#chargingBanner').classList.toggle('hidden', !store.info.charging); }
     if (active.id === 'tab-battery') { updateThermo(); updateImbalance(); $$('[data-spark]').forEach(updateSpark); }
     if (active.id === 'tab-data') renderData();
+    if (active.id === 'tab-history') renderHistoryTab();
     if (store.info.vin) $('#vehicleSub').textContent = `Premium · ${store.info.vin}`;
   });
 }
 
 store.on(() => {
+  sessions.update(source?.kind === 'demo');
+  alerts.check();
   render();
   const v = store.values;
   dataLog.push({ t: new Date().toISOString(), ...Object.fromEntries(Object.keys(METRICS).map((k) => [k, v[k] == null ? '' : Number(v[k]).toFixed(3)])) });
@@ -281,12 +293,16 @@ function setConn(state, text) {
   const on = state === 'connected' || state === 'initialising' || state === 'connecting';
   $('#btnConnect').classList.toggle('hidden', on); $('#btnDemo').classList.toggle('hidden', on);
   $('#btnDisconnect').classList.toggle('hidden', !on);
-  if (state === 'disconnected') { source = null; render(); }
+  if (state === 'disconnected') { sessions.finish(); keepAwake(false); source = null; render(); }
+  if (state === 'connected' && settings.keepAwake) keepAwake(true);
 }
 
 async function start(kind) {
-  if (source) source.disconnect();
+  if (source) { source.disconnect(); sessions.finish(); }
   store.reset(); lastFaults = null; renderFaults();
+  sessions.reset(); alerts.reset();
+  if (kind === 'demo') history.useDemo(); else history.useReal();
+  lastLogKey = ''; histKey = '';
   source = kind === 'demo' ? new DemoSource(store, settings, log) : new LiveSource(store, settings, log);
   setConn('connecting');
   try {
@@ -303,7 +319,7 @@ async function start(kind) {
 
 $('#btnConnect').addEventListener('click', () => start('live'));
 $('#btnDemo').addEventListener('click', () => start('demo'));
-$('#btnDisconnect').addEventListener('click', () => { source?.disconnect(); source = null; setConn('idle'); render(); });
+$('#btnDisconnect').addEventListener('click', () => { source?.disconnect(); sessions.finish(); keepAwake(false); source = null; setConn('idle'); render(); });
 if (!ElmBle.supported()) {
   $('#connectHint').innerHTML = 'This browser has no Web Bluetooth. Open this page in <b>Chrome on Android</b> (over HTTPS) to connect, or try demo mode.';
 }
@@ -316,6 +332,8 @@ $('#btnReadFaults').addEventListener('click', async () => {
     lastFaults = await source.readFaults((msg) => { $('#faultProgress').textContent = msg; });
     $('#faultProgress').textContent = `Read at ${new Date().toLocaleTimeString()}`;
     renderFaults();
+    const f = lastFaults;
+    alerts.faults([...f.stored, ...f.pending, ...f.permanent, ...f.modules.flatMap((m) => m.codes)].filter((d) => dtcSeverity(d) === 'bad'));
   } catch (e) { toast(`Fault read failed: ${e.message}`, true); log(e.message, 'err'); }
   btn.disabled = false;
 });
@@ -364,11 +382,17 @@ renderFaults();
 const sForm = $('#settingsForm');
 sForm.refreshMs.value = settings.refreshMs; sForm.usableKwh.value = settings.usableKwh;
 sForm.consumption.value = settings.consumption; sForm.extraModules.value = settings.extraModules.join(', ');
+sForm.tripIdleMin.value = settings.tripIdleMin;
+const CHECKS = ['alerts', 'alertWarnings', 'alertSound', 'alertVibrate', 'keepAwake'];
+CHECKS.forEach((k) => { sForm[k].checked = !!settings[k]; });
 sForm.addEventListener('submit', (e) => {
   e.preventDefault();
   settings.refreshMs = Math.max(250, Number(sForm.refreshMs.value) || 1000);
   settings.usableKwh = Number(sForm.usableKwh.value) || VEHICLE.usableKwh;
   settings.consumption = Number(sForm.consumption.value) || 18;
+  settings.tripIdleMin = Math.max(1, Number(sForm.tripIdleMin.value) || 5);
+  CHECKS.forEach((k) => { settings[k] = sForm[k].checked; });
+  keepAwake(!!source && settings.keepAwake);
   settings.extraModules = sForm.extraModules.value.split(/[\s,]+/).map((x) => x.toUpperCase()).filter((x) => /^[0-9A-F]{3}$/.test(x));
   sForm.extraModules.value = settings.extraModules.join(', ');
   saveSettings(); toast('Settings saved');
@@ -429,6 +453,211 @@ function downloadCsv(name, rows) {
 $('#btnScanCsv').addEventListener('click', () => downloadCsv(`sealion7-scan-${Date.now()}.csv`, scanRows));
 $('#btnLogCsv').addEventListener('click', () => downloadCsv(`sealion7-log-${Date.now()}.csv`, dataLog));
 $('#btnClearLog').addEventListener('click', () => { consoleEl.innerHTML = ''; });
+
+/* ------------------------------------------------------------------ alerts UI */
+function showAlert(level, title, detail) {
+  const el = document.createElement('div');
+  el.className = 'alert'; el.dataset.s = level; el.setAttribute('role', 'alert');
+  el.innerHTML = `<span class="a-icon">${level === 'bad' ? '✕' : '!'}</span><span class="a-title">${esc(title)}</span>
+    <button aria-label="Dismiss">×</button><span class="a-detail">${esc(detail)}</span>`;
+  const close = () => { el.classList.add('out'); setTimeout(() => el.remove(), 300); };
+  $('button', el).addEventListener('click', close);
+  $('#alertStack').prepend(el);
+  while ($('#alertStack').childElementCount > 3) $('#alertStack').lastChild.remove();
+  if (level !== 'bad') setTimeout(close, 12000); // red alerts stay until dismissed
+  log(`ALERT: ${title} ${detail}`, level === 'bad' ? 'err' : 'warn');
+}
+$('#btnTestAlert').addEventListener('click', () => alerts.fire('bad', 'Test alert', 'This is how a red alert looks, sounds and feels.'));
+
+/* ------------------------------------------------------------------ car mode */
+let carOpen = false;
+async function setCarMode(on) {
+  carOpen = on;
+  $('#carMode').classList.toggle('hidden', !on);
+  document.body.classList.toggle('car-open', on);
+  try {
+    if (on) {
+      if (document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+      if (screen.orientation?.lock) await screen.orientation.lock('landscape').catch(() => {});
+    } else {
+      if (screen.orientation?.unlock) screen.orientation.unlock();
+      if (document.fullscreenElement) await document.exitFullscreen();
+    }
+  } catch { /* fullscreen not allowed: car mode still works in the page */ }
+  if (on) keepAwake(true); else keepAwake(!!source && settings.keepAwake);
+  render();
+}
+$('#btnCarMode').addEventListener('click', () => setCarMode(true));
+$('#btnCarExit').addEventListener('click', () => setCarMode(false));
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && carOpen) setCarMode(false); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && (carOpen || (source && settings.keepAwake))) keepAwake(true); });
+
+function renderCar() {
+  const v = store.values;
+  const sp = $('#cmSpeed');
+  if (v.speed == null) { sp.textContent = '-'; tweens.delete(sp); } else tween(sp, v.speed, 0);
+  const st = $('#cmStatus');
+  const faults = lastFaults ? [...lastFaults.stored, ...lastFaults.pending, ...lastFaults.permanent, ...lastFaults.modules.flatMap((m) => m.codes)] : [];
+  const red = Object.keys(METRICS).filter((k) => statusOf(k, v[k]) === 'bad').map((k) => METRICS[k].label);
+  if (!source) { st.dataset.s = 'none'; st.textContent = 'Not connected'; }
+  else if (red.length) { st.dataset.s = 'bad'; st.textContent = `✕ Check: ${red.join(', ')}`; }
+  else if (faults.length) { st.dataset.s = faults.some((d) => dtcSeverity(d) === 'bad') ? 'bad' : 'warn'; st.textContent = `! ${faults.length} fault code${faults.length > 1 ? 's' : ''}`; }
+  else if (store.info.charging && sessions.charge) {
+    st.dataset.s = 'good';
+    const eta = sessions.eta(80);
+    st.textContent = `⚡ Charging · +${fmt(sessions.charge.addedKwh, 1)} kWh${eta != null ? ` · 80% in ${dur(eta)}` : ''}`;
+  } else { st.dataset.s = 'good'; st.textContent = '✓ All systems normal'; }
+}
+
+/* ------------------------------------------------------------------ history tab */
+const dur = (mins) => (mins == null ? '-' : mins < 60 ? `${Math.round(mins)} min` : `${Math.floor(mins / 60)} h ${String(Math.round(mins % 60)).padStart(2, '0')} min`);
+const when = (t) => new Date(t).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+function stat(label, value, unit = '', s = 'none', pillText) {
+  return `<div class="tile" data-s="${s}"><span class="t-label">${esc(label)}</span>
+    <span class="t-value${value === '-' ? ' na' : ''}"><span class="n">${value}</span><small>${esc(unit)}</small></span>
+    ${s !== 'none' ? `<span class="pill" data-s="${s}">${esc(pillText || STATUS_LABEL[s])}</span>` : ''}</div>`;
+}
+const EMPTY_ICON = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16v.5"/></svg>';
+const effLabel = { good: 'Efficient', warn: 'Average', bad: 'High use' };
+
+let lastLogKey = '';
+function renderHistoryTab() {
+  const v = store.values;
+  /* charging session */
+  const c = sessions.charge; const cp = $('#chargePill');
+  if (c) {
+    const kw = c.samples.length ? c.samples[c.samples.length - 1].kw : 0;
+    const mins = (Date.now() - c.start) / 60000;
+    cp.dataset.s = 'good'; cp.textContent = 'Charging';
+    const soc = v.soc ?? c.endSoc ?? 0; const st = c.startSoc ?? soc;
+    $('#chargeBody').innerHTML = `
+      <div class="charge-bar"><div class="cb-start" style="width:${st}%"></div><div class="cb-fill" style="left:${st}%;width:${Math.max(0, soc - st)}%"></div>
+        <div class="cb-mark" style="left:80%"><span>80%</span></div><div class="cb-mark" style="left:calc(100% - 2px)"><span>100%</span></div></div>
+      <div class="stats">
+        ${stat('Charging power', fmt(kw, 1), 'kW')}
+        ${stat('Energy added', fmt(c.addedKwh, 2), 'kWh')}
+        ${stat('Peak power', fmt(c.peakKw, 1), 'kW')}
+        ${stat('Average power', fmt(c.addedKwh / Math.max(mins / 60, 10 / 3600), 1), 'kW')}
+        ${stat('Charge', `${fmt(st)}→${fmt(soc)}`, '%')}
+        ${stat('Elapsed', dur(mins))}
+        ${stat('Time to 80 %', soc >= 80 ? 'done' : dur(sessions.eta(80)))}
+        ${stat('Time to 100 %', dur(sessions.eta(100)))}
+      </div><p class="note">Times are estimates from the last 3 minutes of charging power. LFP batteries charge more slowly above about 80 %.</p>`;
+  } else {
+    cp.dataset.s = 'none'; cp.textContent = '';
+    $('#chargeBody').innerHTML = `<div class="empty-state">${EMPTY_ICON}<span>Not charging. When the car starts charging (connected and ready), a live session appears here with power, energy added and time to 80 % / 100 %.</span></div>`;
+  }
+
+  /* current trip */
+  const t = sessions.trip;
+  if (t) {
+    const sum = tripSummary(t); const es = consumptionStatus(sum.kwh100);
+    $('#tripBody').innerHTML = `<div class="stats">
+      ${stat('Distance', fmt(sum.distKm, 1), 'km')}
+      ${stat('Driving time', dur(t.movingMs / 60000))}
+      ${stat('Energy used', fmt(sum.usedKwh, 2), 'kWh')}
+      ${stat('Regen recovered', fmt(sum.regenKwh, 2), 'kWh')}
+      ${stat('Consumption', sum.kwh100 == null ? '-' : fmt(sum.kwh100, 1), 'kWh/100 km', es, effLabel[es])}
+      ${stat('Average speed', sum.avgSpeed == null ? '-' : fmt(sum.avgSpeed), 'km/h')}
+      ${stat('Top speed', fmt(sum.maxSpeed), 'km/h')}
+      ${stat('Charge used', sum.startSoc != null && sum.endSoc != null ? fmt(sum.startSoc - sum.endSoc, 1) : '-', '%')}
+    </div>`;
+  } else {
+    $('#tripBody').innerHTML = `<div class="empty-state">${EMPTY_ICON}<span>No trip in progress. A trip starts automatically when the car moves and ends after ${settings.tripIdleMin} minutes stopped, or when charging starts.</span></div>`;
+  }
+  $('#btnEndTrip').disabled = !t;
+
+  /* logs */
+  const H = history.data;
+  const logKey = `${H.trips.length}|${H.trips[0]?.start}|${H.charges.length}|${H.charges[0]?.start}|${H.alerts.length}|${H.alerts[0]?.t}|${history.persist}`;
+  if (logKey === lastLogKey) { drawHistory(); return; }
+  lastLogKey = logKey;
+  const demoTag = (x) => (x.demo ? '<span class="badge-demo">DEMO</span>' : '');
+  $('#tripCount').textContent = H.trips.length ? `${H.trips.length} saved` : '';
+  $('#tripList').innerHTML = H.trips.length ? H.trips.slice(0, 100).map((x) => {
+    const es = consumptionStatus(x.kwh100);
+    return `<div class="log" data-s="${es}"><span class="l-title">${fmt(x.distKm, 1)} km · ${x.kwh100 == null ? '-' : fmt(x.kwh100, 1)} kWh/100 km${demoTag(x)}</span>
+      <span class="l-when">${when(x.start)}</span>
+      <span class="l-detail">${dur((x.end - x.start) / 60000)} · used ${fmt(x.usedKwh, 1)} kWh · regen ${fmt(x.regenKwh, 1)} kWh · avg ${x.avgSpeed == null ? '-' : fmt(x.avgSpeed)} km/h${x.startSoc != null && x.endSoc != null ? ` · ${fmt(x.startSoc)}→${fmt(x.endSoc)} %` : ''}</span></div>`;
+  }).join('') : '<p class="muted small">Trips are saved automatically when they end.</p>';
+  $('#chargeCount').textContent = H.charges.length ? `${H.charges.length} saved` : '';
+  $('#chargeList').innerHTML = H.charges.length ? H.charges.slice(0, 100).map((x) => {
+    const dc = x.peakKw > 22;
+    return `<div class="log" data-s="good"><span class="l-title">+${fmt(x.addedKwh, 1)} kWh · ${dc ? 'DC fast' : 'AC'}${demoTag(x)}</span>
+      <span class="l-when">${when(x.start)}</span>
+      <span class="l-detail">${dur((x.end - x.start) / 60000)} · avg ${fmt(x.avgKw, 1)} kW · peak ${fmt(x.peakKw, 1)} kW${x.startSoc != null && x.endSoc != null ? ` · ${fmt(x.startSoc)}→${fmt(x.endSoc)} %` : ''}</span></div>`;
+  }).join('') : '<p class="muted small">Charging sessions are saved automatically when they end.</p>';
+  $('#alertList').innerHTML = H.alerts.length ? H.alerts.slice(0, 50).map((a) => `<div class="log" data-s="${a.level}">
+      <span class="l-title">${esc(a.title)}</span><span class="l-when">${when(a.t)}</span><span class="l-detail">${esc(a.detail)}</span></div>`).join('')
+    : '<p class="muted small">No alerts yet.</p>';
+  drawHistory();
+}
+
+/* long-term chart */
+const HIST_METRICS = ['soh', 'cellDeltaMv', 'packTemp', 'moduleHighTemp', 'aux12v', 'soc', 'odometer'];
+$('#histMetric').innerHTML = HIST_METRICS.map((k) => `<option value="${k}">${esc(METRICS[k].label)}</option>`).join('');
+$('#histMetric').value = storage.get('s7.histMetric', 'soh');
+['histMetric', 'histRange'].forEach((id) => $(`#${id}`).addEventListener('change', () => { storage.set('s7.histMetric', $('#histMetric').value); histKey = ''; drawHistory(); }));
+let histKey = '';
+function drawHistory() {
+  const metric = $('#histMetric').value; const days = Number($('#histRange').value); const m = METRICS[metric];
+  const snaps = history.data.snapshots;
+  const key = `${metric}|${days}|${snaps.length}|${snaps[snaps.length - 1]?.t}|${history.persist}`;
+  if (key === histKey) return; histKey = key;
+  const from = days ? Date.now() - days * 86400000 : 0;
+  const raw = snaps.filter((s) => s.t >= from && s[metric] != null);
+  const box = $('#histChart');
+  $('#histInfo').textContent = `${snaps.length.toLocaleString()} snapshots saved${history.persist ? ' on this phone' : ' (demo sample data)'} · 1 per minute while connected`;
+  if (raw.length < 2) { box.innerHTML = `<div class="empty">Not enough data yet for ${esc(m.label)}. History builds up automatically every minute you're connected.</div>`; return; }
+  // daily aggregation (min / mean / max) for long ranges, raw points for short ones
+  const spanDays = (raw[raw.length - 1].t - raw[0].t) / 86400000;
+  let pts;
+  if (spanDays > 2) {
+    const byDay = new Map();
+    raw.forEach((s) => { const d = new Date(s.t); d.setHours(12, 0, 0, 0); const k = d.getTime(); const a = byDay.get(k) || []; a.push(s[metric]); byDay.set(k, a); });
+    pts = [...byDay].map(([t, a]) => ({ t, v: a.reduce((x, y) => x + y, 0) / a.length, lo: Math.min(...a), hi: Math.max(...a), n: a.length }));
+  } else pts = raw.map((s) => ({ t: s.t, v: s[metric], lo: s[metric], hi: s[metric], n: 1 }));
+  let lo = Math.min(...pts.map((p) => p.lo)); let hi = Math.max(...pts.map((p) => p.hi));
+  const pad = (hi - lo) * 0.1 || Math.max(0.5, Math.abs(hi) * 0.01); lo -= pad; hi += pad;
+  const W = 600, Hh = 200; const t0 = pts[0].t, t1 = pts[pts.length - 1].t; const span = t1 - t0 || 1;
+  const X = (t) => ((t - t0) / span) * W; const Y = (v) => Hh - ((v - lo) / (hi - lo)) * Hh;
+  const line = pts.map((p, i) => `${i ? 'L' : 'M'}${X(p.t).toFixed(1)},${Y(p.v).toFixed(1)}`).join('');
+  const band = spanDays > 2 ? pts.map((p, i) => `${i ? 'L' : 'M'}${X(p.t).toFixed(1)},${Y(p.hi).toFixed(1)}`).join('')
+    + pts.slice().reverse().map((p) => `L${X(p.t).toFixed(1)},${Y(p.lo).toFixed(1)}`).join('') + 'Z' : '';
+  const ticks = [0, 0.5, 1].map((f) => lo + (hi - lo) * f);
+  const dateFmt = (t) => new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="none" role="img" aria-label="${esc(m.label)} history">
+      ${ticks.map((v) => `<line class="h-grid" x1="0" x2="${W}" y1="${Y(v)}" y2="${Y(v)}" vector-effect="non-scaling-stroke"/>`).join('')}
+      ${band ? `<path class="h-band" d="${band}"/>` : ''}
+      <path class="h-line" d="${line}" vector-effect="non-scaling-stroke"/>
+      <line class="h-cross" y1="0" y2="${Hh}" vector-effect="non-scaling-stroke" style="display:none"/>
+    </svg>
+    ${ticks.map((v) => `<span class="h-y" style="top:calc(10px + ${(Y(v) / Hh) * 200}px)">${fmt(v, m.dp)}</span>`).join('')}
+    <div class="h-x"><span>${dateFmt(t0)}</span><span>${esc(m.label)} (${esc(m.unit)})${spanDays > 2 ? ' · daily average, shaded = daily range' : ''}</span><span>${dateFmt(t1)}</span></div>
+    <div class="tip" style="display:none"></div>`;
+  const svg = $('svg', box); const cross = $('.h-cross', box); const tip = $('.tip', box);
+  const move = (e) => {
+    const r = svg.getBoundingClientRect(); const x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    const t = t0 + x * span; let best = pts[0]; for (const p of pts) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
+    const px = X(best.t); cross.style.display = ''; cross.setAttribute('x1', px); cross.setAttribute('x2', px);
+    tip.style.display = ''; const plotW = box.clientWidth - 56; tip.style.left = `${44 + Math.max(0.12, Math.min(0.88, px / W)) * plotW}px`;
+    tip.textContent = `${spanDays > 2 ? dateFmt(best.t) : new Date(best.t).toLocaleTimeString()} · ${fmt(best.v, m.dp)} ${m.unit}${best.n > 1 ? ` (range ${fmt(best.lo, m.dp)}-${fmt(best.hi, m.dp)})` : ''}`;
+  };
+  svg.addEventListener('pointermove', move); svg.addEventListener('pointerdown', move);
+  svg.addEventListener('pointerleave', () => { cross.style.display = 'none'; tip.style.display = 'none'; });
+}
+$('#btnEndTrip').addEventListener('click', () => { sessions.endTrip(); toast('Trip saved'); histKey = ''; lastLogKey = ''; render(); });
+$('#btnHistCsv').addEventListener('click', () => {
+  const H = history.data;
+  downloadCsv(`sealion7-history-${Date.now()}.csv`, H.snapshots.map((s) => ({ time: new Date(s.t).toISOString(), ...s })));
+  if (H.trips.length) downloadCsv(`sealion7-trips-${Date.now()}.csv`, H.trips.map((x) => ({ ...x, start: new Date(x.start).toISOString(), end: new Date(x.end).toISOString() })));
+  if (H.charges.length) downloadCsv(`sealion7-charges-${Date.now()}.csv`, H.charges.map((x) => ({ ...x, start: new Date(x.start).toISOString(), end: new Date(x.end).toISOString() })));
+});
+$('#btnHistClear').addEventListener('click', () => {
+  if (!history.persist) { toast('Demo data is not saved; disconnect demo mode to manage your real history', true); return; }
+  if (!confirm('Delete all saved history, trips, charging sessions and alerts from this phone? This cannot be undone.')) return;
+  history.clear(); histKey = ''; lastLogKey = ''; render(); toast('Saved history cleared');
+});
 
 /* ------------------------------------------------------------------ boot */
 const savedTab = storage.get('s7.tab', 'overview');

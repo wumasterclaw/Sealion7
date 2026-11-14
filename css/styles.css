@@ -83,7 +83,7 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: 
   border-bottom: 1px solid var(--line);
 }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.brand-mark { width: 34px; height: 34px; padding: 6px; border-radius: 10px; color: #fff; fill: #fff; stroke: none;
+.brand-mark { flex-shrink: 0; width: 34px; height: 34px; padding: 6px; border-radius: 10px; color: #fff; fill: #fff; stroke: none;
   background: linear-gradient(135deg, var(--accent), #2563eb); box-shadow: 0 4px 18px rgba(58, 168, 255, 0.35); }
 .brand .sub { margin: 0; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .top-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
@@ -123,7 +123,7 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: 
 /* ------------------------------------------------------------------ tabs */
 .tabs {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
-  display: grid; grid-template-columns: repeat(5, 1fr);
+  display: grid; grid-template-columns: repeat(6, 1fr);
   padding: 6px 6px calc(6px + env(safe-area-inset-bottom));
   background: color-mix(in srgb, var(--bg-2) 90%, transparent);
   backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
@@ -211,7 +211,7 @@ main { max-width: 1280px; margin: 0 auto; padding: 12px 16px; }
 .gauge:not(.big) .g-num { font-size: clamp(24px, 7vw, 34px); }
 .g-unit { font-size: 13px; color: var(--text-2); margin-top: 2px; }
 .g-sub { margin-top: 8px; }
-.gauge.charging .g-val { animation: charge-glow 1.6s ease-in-out infinite; }
+.gauge.is-charging .g-val { animation: charge-glow 1.6s ease-in-out infinite; }
 @keyframes charge-glow { 50% { filter: drop-shadow(0 0 18px color-mix(in srgb, var(--sc) 90%, transparent)); } }
 .gauges { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .gauges figure { margin: 0; text-align: center; }
@@ -352,3 +352,99 @@ table.data tr:hover td { background: rgba(255,255,255,.02); }
 }
 
 #faultTileValue { font-size: 20px; }
+
+/* ================================================================ v2 additions */
+.tabs button span { white-space: nowrap; }
+@media (max-width: 380px) { .tabs button { font-size: 10px; } .tabs button svg { width: 20px; height: 20px; } }
+.icon-btn { display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--line-2);
+  background: var(--surface-2); color: var(--text); cursor: pointer; transition: border-color .2s, transform .12s; }
+.icon-btn:hover { border-color: var(--accent); } .icon-btn:active { transform: scale(.94); }
+.icon-btn svg { width: 20px; height: 20px; }
+@media (max-width: 420px) { .ro-badge { padding: 4px 7px; } }
+.grow { flex: 1; }
+.select { min-height: 32px; padding: 0 8px; border-radius: 9px; border: 1px solid var(--line-2); background: var(--bg-2); color: var(--text); font: 13px var(--font); }
+.btn.danger { color: #ff9a9d; border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+fieldset.checks { border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px 10px; display: grid; gap: 2px; margin: 0; }
+fieldset.checks legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
+.form label.check { min-height: 34px; color: var(--text-2); font-size: 13.5px; }
+
+/* stat grid used by trip + charging cards */
+.stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (min-width: 640px) { .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.empty-state { display: flex; align-items: center; gap: 12px; padding: 14px; border-radius: 14px; background: var(--surface-2); border: 1px dashed var(--line-2); color: var(--muted); font-size: 13.5px; }
+.empty-state svg { width: 26px; height: 26px; flex-shrink: 0; color: var(--accent); }
+
+/* charge progress: start -> now, with 80 % / 100 % targets */
+.charge-bar { position: relative; height: 22px; margin: 4px 0 26px; border-radius: 11px; background: var(--surface-2); border: 1px solid var(--line); overflow: visible; }
+.charge-bar .cb-start { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 11px 0 0 11px; background: rgba(255,255,255,.08); }
+.charge-bar .cb-fill { position: absolute; top: 0; bottom: 0; border-radius: 0 11px 11px 0; transition: width .8s cubic-bezier(.2,.8,.2,1);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--good) 55%, transparent), var(--good)) ,var(--good);
+  background-size: 200% 100%; animation: sweep 2.2s linear infinite; }
+.charge-bar .cb-mark { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--text-2); }
+.charge-bar .cb-mark span { position: absolute; top: 30px; left: 50%; transform: translateX(-50%); font-size: 11px; color: var(--muted); white-space: nowrap; }
+
+/* logs */
+.log-list { display: grid; gap: 8px; max-height: 460px; overflow: auto; }
+.log { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); border-left: 4px solid var(--sc, var(--none)); animation: rise .35s ease both; }
+.log .l-title { font-weight: 650; font-size: 14px; }
+.log .l-when { font-size: 12px; color: var(--muted); text-align: right; }
+.log .l-detail { grid-column: 1 / -1; font-size: 12.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.badge-demo { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 6px; font-size: 10.5px; font-weight: 700; color: var(--accent-2); border: 1px solid rgba(58,168,255,.4); vertical-align: 1px; }
+
+/* long-term chart */
+.hist-chart { position: relative; padding: 10px 12px 6px 44px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); touch-action: pan-y; }
+.hist-chart svg { display: block; width: 100%; height: 200px; overflow: visible; }
+.hist-chart .h-line { stroke: var(--accent); stroke-width: 2; fill: none; }
+.hist-chart .h-band { fill: rgba(58, 168, 255, .14); stroke: none; }
+.hist-chart .h-grid { stroke: var(--line); stroke-width: 1; }
+.hist-chart .h-cross { stroke: var(--text-2); stroke-width: 1; }
+.hist-chart .h-dot { fill: var(--accent); stroke: var(--surface-2); stroke-width: 2; }
+.hist-chart .h-y { position: absolute; left: 8px; font-size: 11px; color: var(--muted); transform: translateY(-50%); font-variant-numeric: tabular-nums; }
+.hist-chart .h-x { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 4px; }
+.hist-chart .tip { position: absolute; top: 8px; padding: 4px 8px; border-radius: 8px; font-size: 12px; background: var(--bg); border: 1px solid var(--line-2); pointer-events: none; white-space: nowrap; transform: translateX(-50%); }
+.hist-chart .empty { height: 200px; display: grid; place-items: center; color: var(--muted); font-size: 13px; text-align: center; padding: 0 16px; }
+
+/* alert banners */
+.alert-stack { position: fixed; top: calc(64px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 60;
+  width: min(560px, calc(100vw - 24px)); display: grid; gap: 8px; pointer-events: none; }
+.alert { --sc: var(--warn); pointer-events: auto; display: grid; grid-template-columns: auto 1fr auto; gap: 2px 12px; align-items: center;
+  padding: 12px 14px; border-radius: 14px; background: color-mix(in srgb, var(--sc) 20%, var(--surface)); border: 1px solid var(--sc);
+  box-shadow: 0 12px 34px rgba(0,0,0,.5); animation: drop .35s cubic-bezier(.2,.8,.2,1) both; }
+.alert[data-s="bad"] { --sc: var(--bad); animation: drop .35s cubic-bezier(.2,.8,.2,1) both, pulse-bad 1.4s ease-in-out .4s infinite; }
+.alert .a-icon { grid-row: span 2; width: 30px; height: 30px; border-radius: 50%; background: var(--sc); display: grid; place-items: center; color: #fff; font-weight: 900; }
+.alert[data-s="warn"] .a-icon { color: #000; }
+.alert .a-title { font-weight: 700; }
+.alert .a-detail { font-size: 12.5px; color: var(--text-2); }
+.alert button { grid-row: span 2; background: none; border: 0; color: var(--text-2); font-size: 22px; cursor: pointer; padding: 4px 8px; }
+.alert.out { animation: lift .3s ease both; }
+@keyframes drop { from { opacity: 0; transform: translateY(-16px) scale(.98); } }
+@keyframes lift { to { opacity: 0; transform: translateY(-12px); } }
+
+/* car mode */
+.carmode { position: fixed; inset: 0; z-index: 70; background: radial-gradient(900px 500px at 30% 20%, rgba(58,168,255,.10), transparent 60%), var(--bg);
+  padding: calc(12px + env(safe-area-inset-top)) 16px calc(12px + env(safe-area-inset-bottom)); overflow: auto; animation: rise .3s ease both; }
+.cm-grid { display: grid; gap: 14px; height: 100%; grid-template-columns: 1fr; grid-template-areas: "gauge" "speed" "tiles" "status"; align-content: start; }
+.cm-gauge { grid-area: gauge; display: grid; place-items: center; }
+.cm-gauge .gauge.big { max-width: min(330px, 70vw); }
+.cm-speed { grid-area: speed; display: flex; align-items: baseline; justify-content: center; gap: 8px; }
+.cm-num { font-size: clamp(64px, 18vw, 120px); font-weight: 800; letter-spacing: -0.04em; line-height: 1; }
+.cm-unit { font-size: 20px; color: var(--text-2); }
+.cm-tiles { grid-area: tiles; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.cm-tiles .t-value { font-size: clamp(26px, 6vw, 38px); }
+.cm-tiles .t-label { font-size: 14px; }
+.cm-status { grid-area: status; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 12px; border-radius: 14px; font-size: 17px; font-weight: 700;
+  background: color-mix(in srgb, var(--sc, var(--none)) 16%, var(--surface-2)); border: 1px solid color-mix(in srgb, var(--sc, var(--none)) 50%, transparent); }
+.cm-status:empty { display: none; }
+.cm-exit { position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 16px; }
+@media (orientation: landscape) and (min-width: 600px) {
+  .cm-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); grid-template-rows: auto auto 1fr; grid-template-areas: "gauge speed" "gauge status" "gauge tiles"; align-content: start; gap: 10px 18px; }
+  .cm-gauge { align-self: center; grid-row: 1 / -1; }
+  .cm-gauge .gauge.big { max-width: min(420px, 42vw, 80vh); }
+  .cm-speed { justify-content: flex-start; padding-top: 4px; }
+  .cm-num { font-size: clamp(56px, 20vh, 120px); }
+  .cm-status { font-size: 15px; padding: 8px 12px; justify-content: flex-start; margin-right: 150px; }
+  .cm-tiles .tile { padding: 8px 10px 8px 14px; gap: 2px; }
+  .cm-tiles .t-value { font-size: clamp(22px, 7vh, 36px); }
+  .cm-tiles .t-label { font-size: 13px; }
+}
+body.car-open { overflow: hidden; }

@@ -9,12 +9,21 @@ and talks to a Bluetooth LE OBD2 adapter. No app store or server is needed, and 
 |---|---|
 | **Overview** | Animated SOC gauge, estimated range, pack temperature, battery power, 12 V battery, health tiles, power-flow bar, speed / odometer / outside temp |
 | **Battery** | SOC, SOH and pack-temperature gauges, a thermal band (pack + module min/max), cell voltages and imbalance, lifetime energy and cycles, 10-minute trend charts |
+| **History** | Live charging session (power, kWh added, time to 80 % / 100 %), current trip (distance, kWh/100 km, regen), trip and charging logs, long-term charts of battery health, cell balance, temperatures and 12 V, recent alerts |
 | **Faults** | Stored, pending and permanent OBD2 codes plus a per-module UDS scan, with descriptions. **View only: codes are never cleared.** |
 | **All data** | Every standard PID the car reports as supported, every BYD battery value with raw bytes, VIN and adapter |
 | **Tools** | Settings, custom PIDs, an identifier discovery scanner, a live console and CSV export |
 
 Every value is colour-coded with an icon and a label: **green = Good**, **amber = Warning**, **red = Fault**.
 Hover over (or long-press) a tile to see the thresholds.
+
+**Car mode** (car icon in the top bar) shows a large full-screen view for a phone mount. It switches to landscape and keeps the screen on.
+**Alerts** pop up, beep and vibrate when a value turns red (amber is optional). Set them up under Tools → Settings, where *Test alert* plays a sample.
+**History** is saved on the phone only (once a minute while connected, plus every trip and charge). It can be exported to CSV, and demo mode never writes to it.
+
+### Can it run on the car's own screen?
+Probably not. The Sealion 7's DiLink system has no Chrome and doesn't support Web Bluetooth, and Android Auto doesn't run web apps.
+Use the phone in a dash mount with **car mode**.
 
 ## Read-only guarantee
 
@@ -30,6 +39,8 @@ Known-good choices for BYD e-Platform 3.0 include **vLinker MC+ / FS BLE**, **Vg
 **OBDLink CX** and **Veepeak OBDCheck BLE+**.
 
 ## Using it
+
+Live app: **https://wumasterclaw.github.io/Sealion7/**
 
 1. Host the folder over HTTPS. **GitHub Pages** is easiest: Settings → Pages → Deploy from branch → `main` / root.
 2. Open the page in **Chrome on Android**, then use ⋮ → *Add to Home screen*.
@@ -66,6 +77,7 @@ js/elm.js             Web Bluetooth ELM327 transport
 js/obd.js             ISO-TP parsing, standard PIDs, DTC decoding, UDS reads
 js/profile.js         Sealion 7 profile: BYD identifiers, thresholds, fault descriptions
 js/sources.js         live polling, demo simulator, data store
+js/features.js        trips, charging sessions, alerts, saved history, wake lock
 js/app.js             UI: gauges, tiles, charts, faults, tools
 sw.js, manifest       offline + install to home screen
 ```
