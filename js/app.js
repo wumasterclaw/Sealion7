@@ -3,6 +3,7 @@ import { ElmBle } from './elm.js';
 import { stdPidInfo, hex, nrcText } from './obd.js';
 import { METRICS, BYD_PIDS, statusOf, describeDtc, dtcSeverity, VEHICLE } from './profile.js';
 import { History, Sessions, Alerts, keepAwake, tripSummary, consumptionStatus } from './features.js';
+import { initTrip } from './trip.js';
 
 /* ------------------------------------------------------------------ helpers */
 const $ = (s, el = document) => el.querySelector(s);
@@ -19,7 +20,7 @@ const storage = {
 
 const settings = Object.assign(
   { refreshMs: 1000, usableKwh: VEHICLE.usableKwh, consumption: 18, extraModules: [], customPids: [],
-    tripIdleMin: 5, alerts: true, alertWarnings: false, alertSound: true, alertVibrate: true, keepAwake: true },
+    tripIdleMin: 5, ocmKey: '', carDcKw: 150, alerts: true, alertWarnings: false, alertSound: true, alertVibrate: true, keepAwake: true },
   storage.get('s7.settings', {}),
 );
 const saveSettings = () => storage.set('s7.settings', settings);
@@ -54,6 +55,7 @@ $$('.tabs button').forEach((b) => b.addEventListener('click', () => {
   $$('.tabs button').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
   $$('.panel').forEach((p) => p.classList.toggle('active', p.id === `tab-${b.dataset.tab}`));
   storage.set('s7.tab', b.dataset.tab);
+  if (b.dataset.tab === 'trip') tripCtx.onShow?.();
   render();
 }));
 
@@ -383,6 +385,8 @@ const sForm = $('#settingsForm');
 sForm.refreshMs.value = settings.refreshMs; sForm.usableKwh.value = settings.usableKwh;
 sForm.consumption.value = settings.consumption; sForm.extraModules.value = settings.extraModules.join(', ');
 sForm.tripIdleMin.value = settings.tripIdleMin;
+sForm.ocmKey.value = settings.ocmKey; sForm.carDcKw.value = settings.carDcKw;
+$('#btnShowKey').addEventListener('click', (e) => { const t = sForm.ocmKey.type === 'password'; sForm.ocmKey.type = t ? 'text' : 'password'; e.target.textContent = t ? 'Hide' : 'Show'; });
 const CHECKS = ['alerts', 'alertWarnings', 'alertSound', 'alertVibrate', 'keepAwake'];
 CHECKS.forEach((k) => { sForm[k].checked = !!settings[k]; });
 sForm.addEventListener('submit', (e) => {
@@ -391,6 +395,8 @@ sForm.addEventListener('submit', (e) => {
   settings.usableKwh = Number(sForm.usableKwh.value) || VEHICLE.usableKwh;
   settings.consumption = Number(sForm.consumption.value) || 18;
   settings.tripIdleMin = Math.max(1, Number(sForm.tripIdleMin.value) || 5);
+  settings.ocmKey = sForm.ocmKey.value.trim();
+  settings.carDcKw = Math.max(20, Number(sForm.carDcKw.value) || 150);
   CHECKS.forEach((k) => { settings[k] = sForm[k].checked; });
   keepAwake(!!source && settings.keepAwake);
   settings.extraModules = sForm.extraModules.value.split(/[\s,]+/).map((x) => x.toUpperCase()).filter((x) => /^[0-9A-F]{3}$/.test(x));
@@ -658,6 +664,10 @@ $('#btnHistClear').addEventListener('click', () => {
   if (!confirm('Delete all saved history, trips, charging sessions and alerts from this phone? This cannot be undone.')) return;
   history.clear(); histKey = ''; lastLogKey = ''; render(); toast('Saved history cleared');
 });
+
+/* ------------------------------------------------------------------ trip planner */
+const tripCtx = { store, settings, toast, log, esc, fmt };
+initTrip(tripCtx);
 
 /* ------------------------------------------------------------------ boot */
 const savedTab = storage.get('s7.tab', 'overview');

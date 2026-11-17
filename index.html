@@ -9,7 +9,9 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous">
   <link rel="stylesheet" href="css/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -44,6 +46,7 @@
     <button role="tab" data-tab="overview" aria-selected="true"><svg viewBox="0 0 24 24"><path d="M3 13a9 9 0 0 1 18 0M12 13l4-4"/></svg><span>Overview</span></button>
     <button role="tab" data-tab="battery" aria-selected="false"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="16" height="10" rx="2"/><path d="M21 10v4M7 10v4M11 10v4"/></svg><span>Battery</span></button>
     <button role="tab" data-tab="history" aria-selected="false"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>History</span></button>
+    <button role="tab" data-tab="trip" aria-selected="false"><svg viewBox="0 0 24 24"><path d="M12 21s-6-5.3-6-11a6 6 0 0 1 12 0c0 5.7-6 11-6 11z"/><circle cx="12" cy="10" r="2.2"/></svg><span>Trip</span></button>
     <button role="tab" data-tab="faults" aria-selected="false"><svg viewBox="0 0 24 24"><path d="M12 3 2 20h20zM12 10v4M12 17v.5"/></svg><span>Faults</span><b class="tab-badge hidden" id="faultBadge">0</b></button>
     <button role="tab" data-tab="data" aria-selected="false"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>All data</span></button>
     <button role="tab" data-tab="tools" aria-selected="false"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg><span>Tools</span></button>
@@ -220,6 +223,66 @@
       </div>
     </section>
 
+    <!-- =========================== TRIP PLANNER =========================== -->
+    <section class="panel" id="tab-trip" role="tabpanel">
+      <div class="grid">
+        <article class="card wide">
+          <header class="card-h"><h2>Plan a road trip</h2><span class="muted small">Australia · CCS2 &amp; Type 2</span></header>
+          <form class="form trip-form" id="tripForm" autocomplete="off">
+            <div class="trip-places">
+              <label>From<span class="with-btn"><input name="from" required placeholder="e.g. Sydney NSW">
+                <button type="button" class="icon-btn" id="btnMyLoc" title="Use my location" aria-label="Use my location"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg></button></span></label>
+              <label>Via (optional)<input name="via" placeholder="e.g. Canberra ACT"></label>
+              <label>To<input name="to" required placeholder="e.g. Melbourne VIC"></label>
+            </div>
+            <div class="trip-opts">
+              <label>Start charge %<span class="with-btn"><input name="startSoc" type="number" min="1" max="100"><button type="button" class="btn ghost small" id="btnSocFromCar" title="Use the car's current charge">From car</button></span></label>
+              <label>Arrive with at least %<input name="reserve" type="number" min="0" max="50"></label>
+              <label>Charge to % at stops<input name="chargeTo" type="number" min="50" max="100"></label>
+              <label>Extra consumption %<input name="bufferPct" type="number" min="0" max="100" title="Add 10 % normally, 20-30 % for hills, headwinds or 110 km/h, 40 %+ when towing"></label>
+              <label>Search width (km from road)<input name="corridorKm" type="number" min="1" max="50"></label>
+            </div>
+            <p class="note">Extra consumption: about 10 % for normal driving, 20-30 % for hills, headwinds or 110 km/h, 40 % or more when towing a caravan.</p>
+            <div class="row">
+              <button class="btn primary" id="btnPlan" type="submit">Plan trip</button>
+              <button class="btn ghost" id="btnSample" type="button">Try sample trip</button>
+              <button class="btn ghost" id="btnSaveTrip" type="button" disabled>Save for offline</button>
+            </div>
+            <p class="muted small" id="tripProgress" aria-live="polite"></p>
+          </form>
+        </article>
+
+        <article class="card wide map-card">
+          <header class="card-h"><h2>Route &amp; chargers</h2></header>
+          <div class="chips" id="catChips" aria-label="Charger types"></div>
+          <div class="row tight filters">
+            <select class="select" id="fNetwork" aria-label="Network"><option value="all">All networks</option></select>
+            <select class="select" id="fMinKw" aria-label="Minimum power"><option value="0">Any power</option><option value="22">22 kW+</option><option value="50">50 kW+</option><option value="100">100 kW+</option><option value="150">150 kW+</option></select>
+            <label class="check small"><input type="checkbox" id="fFree"> Free only</label>
+            <label class="check small"><input type="checkbox" id="fOffline"> Hide offline</label>
+          </div>
+          <div class="trip-map" id="tripMap"></div>
+          <p class="note">Route colours: <b class="c-good">green</b> = comfortable, <b class="c-warn">amber</b> = within 5 % of your reserve, <b class="c-bad">red</b> = won't make it. Numbered pins are your planned stops.</p>
+        </article>
+
+        <article class="card wide">
+          <header class="card-h"><h2>Your charging plan</h2><span class="pill" id="planPill" data-s="none"></span></header>
+          <div id="planBody"><p class="muted small">Enter a trip above, or tap <b>Try sample trip</b>.</p></div>
+        </article>
+
+        <article class="card wide">
+          <header class="card-h"><h2>Chargers along the route</h2><span class="muted small" id="chargerCount"></span></header>
+          <div class="ch-list" id="chargerList"></div>
+        </article>
+
+        <article class="card wide">
+          <header class="card-h"><h2>Saved trips</h2></header>
+          <ul class="custom-list" id="savedTrips"></ul>
+          <p class="note">Charger data © <a href="https://openchargemap.org" target="_blank" rel="noopener">Open Charge Map</a> contributors (CC BY-SA 4.0). Routing by OSRM, places by OpenStreetMap Nominatim.</p>
+        </article>
+      </div>
+    </section>
+
     <!-- ============================= FAULTS ============================= -->
     <section class="panel" id="tab-faults" role="tabpanel">
       <div class="grid">
@@ -267,6 +330,8 @@
             <label>Usable battery capacity (kWh)<input type="number" name="usableKwh" min="10" max="200" step="0.1"></label>
             <label>Your average consumption (kWh/100 km)<input type="number" name="consumption" min="8" max="40" step="0.1"></label>
             <label>Extra module addresses to scan (comma separated, e.g. 7C0,7C6)<input type="text" name="extraModules" placeholder="7C0, 7C6"></label>
+            <label>Open Charge Map API key (for the trip planner)<span class="with-btn"><input type="password" name="ocmKey" autocomplete="off" spellcheck="false" placeholder="Paste your key here"><button type="button" class="btn ghost small" id="btnShowKey">Show</button></span></label>
+            <label>Car's max DC charging power (kW, check your spec)<input type="number" name="carDcKw" min="20" max="400" step="1"></label>
             <label>End a trip after the car is stopped for (minutes)<input type="number" name="tripIdleMin" min="1" max="120" step="1"></label>
             <fieldset class="checks">
               <legend>Alerts</legend>
