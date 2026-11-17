@@ -10,6 +10,7 @@ and talks to a Bluetooth LE OBD2 adapter. No app store or server is needed, and 
 | **Overview** | Animated SOC gauge, estimated range, pack temperature, battery power, 12 V battery, health tiles, power-flow bar, speed / odometer / outside temp |
 | **Battery** | SOC, SOH and pack-temperature gauges, a thermal band (pack + module min/max), cell voltages and imbalance, lifetime energy and cycles, 10-minute trend charts |
 | **History** | Live charging session (power, kWh added, time to 80 % / 100 %), current trip (distance, kWh/100 km, regen), trip and charging logs, long-term charts of battery health, cell balance, temperatures and 12 V, recent alerts |
+| **Trip** | Road-trip planner for Australia: route map with every charger along the way (ultra/fast/slow DC, AC, outlets, incompatible), filters by type, network, power, free and offline, a charging-stop plan that keeps you above your reserve, warnings for long gaps, and trips saved for offline use |
 | **Faults** | Stored, pending and permanent OBD2 codes plus a per-module UDS scan, with descriptions. **View only: codes are never cleared.** |
 | **All data** | Every standard PID the car reports as supported, every BYD battery value with raw bytes, VIN and adapter |
 | **Tools** | Settings, custom PIDs, an identifier discovery scanner, a live console and CSV export |
@@ -20,6 +21,11 @@ Hover over (or long-press) a tile to see the thresholds.
 **Car mode** (car icon in the top bar) shows a large full-screen view for a phone mount. It switches to landscape and keeps the screen on.
 **Alerts** pop up, beep and vibrate when a value turns red (amber is optional). Set them up under Tools → Settings, where *Test alert* plays a sample.
 **History** is saved on the phone only (once a minute while connected, plus every trip and charge). It can be exported to CSV, and demo mode never writes to it.
+
+### Trip planner set-up
+Charger data comes from [Open Charge Map](https://openchargemap.org). Get a free API key (sign in, open your account menu, choose **My Apps**, then **Register an application**) and paste it into **Tools → Settings**. It's stored on your phone only.
+Routes come from OSRM and place search from OpenStreetMap Nominatim, both free and needing no key. **Try sample trip** works without a key, using made-up chargers.
+Stops use only working, public CCS2 DC chargers. Always check a charger in its network's app before relying on it.
 
 ### Can it run on the car's own screen?
 Probably not. The Sealion 7's DiLink system has no Chrome and doesn't support Web Bluetooth, and Android Auto doesn't run web apps.
@@ -78,6 +84,9 @@ js/obd.js             ISO-TP parsing, standard PIDs, DTC decoding, UDS reads
 js/profile.js         Sealion 7 profile: BYD identifiers, thresholds, fault descriptions
 js/sources.js         live polling, demo simulator, data store
 js/features.js        trips, charging sessions, alerts, saved history, wake lock
+js/planner.js         trip planner logic: routing, charger search, classification, stop planning
+js/trip.js            trip planner UI: map, filters, plan, charger list, saved trips
+js/sample-trip.js     offline sample trip (made-up chargers)
 js/app.js             UI: gauges, tiles, charts, faults, tools
 sw.js, manifest       offline + install to home screen
 ```
